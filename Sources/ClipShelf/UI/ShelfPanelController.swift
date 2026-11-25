@@ -85,7 +85,7 @@ public final class ShelfPanelController {
 
     public func toggle() {
         if panel.isVisible {
-            hide()
+            hide(immediately: false, restoreFocus: true)
         } else {
             show()
         }
@@ -114,8 +114,8 @@ public final class ShelfPanelController {
         if reduceMotion {
             panel.setFrame(finalFrame, display: true)
             panel.alphaValue = 1
-            panel.orderFrontRegardless()
-            panel.makeKey()
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
         } else {
             let startFrame = NSRect(
                 x: finalFrame.minX,
@@ -125,8 +125,8 @@ public final class ShelfPanelController {
             )
             panel.setFrame(startFrame, display: true)
             panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            panel.makeKey()
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
 
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.16
@@ -139,7 +139,7 @@ public final class ShelfPanelController {
         installMonitors()
     }
 
-    public func hide() {
+    public func hide(immediately: Bool = false, restoreFocus: Bool = false) {
         removeMonitors()
         QuickLookHelper.shared.closeIfVisible()
         store.isSearching = false
@@ -147,8 +147,11 @@ public final class ShelfPanelController {
 
         guard panel.isVisible else { return }
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if reduceMotion {
+        if immediately || reduceMotion {
             panel.orderOut(nil)
+            if restoreFocus {
+                previousApp?.activate(options: [])
+            }
             return
         }
 
@@ -162,6 +165,9 @@ public final class ShelfPanelController {
         }, completionHandler: { [weak self] in
             Task { @MainActor in
                 self?.panel.orderOut(nil)
+                if restoreFocus {
+                    self?.previousApp?.activate(options: [])
+                }
             }
         })
     }
@@ -173,7 +179,7 @@ public final class ShelfPanelController {
             targetApp: previousApp,
             plainTextOnly: plainTextOnly,
             soundEnabled: store.settings.soundEffectsEnabled,
-            dismissShelf: { [weak self] in self?.hide() }
+            dismissShelf: { [weak self] in self?.hide(immediately: true, restoreFocus: false) }
         )
     }
 
@@ -228,7 +234,7 @@ public final class ShelfPanelController {
                 store.isSearching = false
                 return true
             }
-            hide()
+            hide(immediately: false, restoreFocus: true)
             return true
         }
 

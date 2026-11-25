@@ -78,20 +78,21 @@ public final class AutoPasteService {
         SoundEffectPlayer.shared.playPaste(enabled: soundEnabled)
         dismissShelf()
 
+        NSApp.deactivate()
         targetApp?.activate(options: [])
 
         guard isAccessibilityTrusted(promptIfNeeded: true) else {
             return
         }
 
-        // Brief delay to allow target application to regain key focus before synthetic ⌘V
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
+        // Allow target app to regain key focus after panel orders out before synthetic ⌘V
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             Self.postCommandV()
         }
     }
 
     private static func postCommandV() {
-        let source = CGEventSource(stateID: .combinedSessionState)
+        let source = CGEventSource(stateID: .hidSystemState)
         let keyV = CGKeyCode(kVK_ANSI_V)
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: false) else {
