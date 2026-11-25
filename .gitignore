@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+build/
+LocalSounds/
+.DS_Store
+*.xcodeproj
+DerivedData/
