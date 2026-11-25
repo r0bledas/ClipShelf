@@ -85,9 +85,43 @@ public final class AutoPasteService {
             return
         }
 
-        // Allow target app to regain key focus after panel orders out before synthetic ⌘V
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            Self.postCommandV()
+        // Fire ⌘V as soon as WindowServer confirms targetApp is active (with a short fallback timeout).
+        guard let targetApp, !targetApp.isActive else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                Self.postCommandV()
+            }
+            return
+        }
+
+        let targetPID = targetApp.processIdentifier
+        var didFire = false
+        var observer: NSObjectProtocol?
+
+        let fireOnce: @MainActor () -> Void = {
+            guard !didFire else { return }
+            didFire = true
+            if let obs = observer {
+                NSWorkspace.shared.notificationCenter.removeObserver(obs)
+                observer = nil
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                Self.postCommandV()
+            }
+        }
+
+        observer = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+               app.processIdentifier == targetPID {
+                Task { @MainActor in fireOnce() }
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+            fireOnce()
         }
     }
 
