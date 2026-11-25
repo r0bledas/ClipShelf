@@ -29,6 +29,19 @@ if [[ -d "${RESOURCE_BUNDLE}" ]]; then
   cp -R "${RESOURCE_BUNDLE}" "${RESOURCES_DIR}/"
 fi
 
+# Compile Icon Composer document (AppIcon.icon) into Assets.car + AppIcon.icns
+if [[ -d "${ROOT_DIR}/AppIcon.icon" ]]; then
+  echo "Compiling AppIcon.icon via actool..."
+  xcrun actool "${ROOT_DIR}/AppIcon.icon" \
+    --compile "${RESOURCES_DIR}" \
+    --app-icon AppIcon \
+    --output-partial-info-plist "/tmp/${APP_NAME}-icon-partial.plist" \
+    --platform macosx \
+    --minimum-deployment-target 14.0 \
+    --target-device mac >/dev/null
+  rm -f "/tmp/${APP_NAME}-icon-partial.plist"
+fi
+
 # Bundle optional gitignored local sound overrides if present
 if [[ -d "${ROOT_DIR}/LocalSounds" ]]; then
   mkdir -p "${RESOURCES_DIR}/LocalSounds"
@@ -45,6 +58,10 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleInfoDictionaryVersion</key>
