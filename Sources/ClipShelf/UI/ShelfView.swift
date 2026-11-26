@@ -56,8 +56,13 @@ struct ShelfView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: store.isSearching) { _, searching in
             if searching {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                searchFieldFocused = true
+                DispatchQueue.main.async {
                     searchFieldFocused = true
+                    if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                        let len = (editor.string as NSString).length
+                        editor.setSelectedRange(NSRange(location: len, length: 0))
+                    }
                 }
             } else {
                 searchFieldFocused = false
@@ -147,23 +152,12 @@ struct ShelfView: View {
                         .background(Color.orange.opacity(0.15), in: Capsule())
                 }
 
-                Menu {
-                    Button("About ClipShelf") { onOpenAbout() }
-                    Divider()
-                    Button("Settings…") { onOpenSettings() }
-                        .keyboardShortcut(",", modifiers: .command)
-                    Button("Help") { onOpenHelp() }
-                    Divider()
-                    Button(store.settings.isPaused ? "Resume ClipShelf" : "Pause ClipShelf") {
-                        store.settings.isPaused.toggle()
-                    }
-                    Divider()
-                    Button("Quit ClipShelf") { onQuit() }
-                        .keyboardShortcut("q", modifiers: .command)
+                Button {
+                    showEllipsisMenu()
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(moreHovered ? 0.95 : 0.75))
+                        .foregroundStyle(.white.opacity(moreHovered ? 0.95 : 0.72))
                         .frame(width: 28, height: 26)
                         .background(
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -171,10 +165,9 @@ struct ShelfView: View {
                         )
                         .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 28)
+                .buttonStyle(.plain)
                 .onHover { hovering in moreHovered = hovering }
+                .help("More Options")
             }
         }
         .frame(height: 30)
@@ -332,6 +325,7 @@ struct ShelfView: View {
 
     private var cardStrip: some View {
         let items = store.filteredItems
+        let activeSelectedID = store.selectedItem?.id
 
         return Group {
             if items.isEmpty {
@@ -342,12 +336,22 @@ struct ShelfView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 14) {
                                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                    let previewImg: NSImage? = {
+                                        switch item.kind {
+                                        case .image: return store.blobImage(named: item.imageFilename)
+                                        case .link: return store.blobImage(named: item.linkImageFilename)
+                                        default: return nil
+                                        }
+                                    }()
+                                    let fIcon: NSImage? = (item.kind == .file) ? store.fileIcon(for: item.filePaths.first) : nil
+
                                     CardView(
                                         item: item,
                                         slotIndex: index + 1,
-                                        isSelected: store.selectedItem?.id == item.id,
+                                        isSelected: activeSelectedID == item.id,
                                         appIcon: store.appIcon(for: item.sourceAppBundleID),
-                                        storage: store.storage,
+                                        previewImage: previewImg,
+                                        fileIcon: fIcon,
                                         pinboards: store.pinboards,
                                         onSelect: { store.selectedItemID = item.id },
                                         onPaste: { plainOnly in onPaste(item, plainOnly) },
@@ -402,5 +406,60 @@ struct ShelfView: View {
                 .foregroundStyle(.white.opacity(0.45))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func showEllipsisMenu() {
+        let menu = NSMenu()
+        let handlers = [
+            MenuActionHandler(title: "About ClipShelf", keyEquivalent: "", action: onOpenAbout),
+            MenuActionHandler(title: "Settings…", keyEquivalent: ",", action: onOpenSettings),
+            MenuActionHandler(title: "Help", keyEquivalent: "", action: onOpenHelp),
+            MenuActionHandler(
+                title: store.settings.isPaused ? "Resume ClipShelf" : "Pause ClipShelf",
+                keyEquivalent: "",
+                action: { store.settings.isPaused.toggle() }
+            ),
+            MenuActionHandler(title: "Quit ClipShelf", keyEquivalent: "q", action: onQuit)
+        ]
+
+        menu.addItem(handlers[0].makeItem())
+        menu.addItem(.separator())
+        menu.addItem(handlers[1].makeItem())
+        menu.addItem(handlers[2].makeItem())
+        menu.addItem(.separator())
+        menu.addItem(handlers[3].makeItem())
+        menu.addItem(.separator())
+        menu.addItem(handlers[4].makeItem())
+
+        // Keep handlers alive for the duration of the synchronous menu popup
+        withExtendedLifetime(handlers) {
+            if let event = NSApp.currentEvent, let view = event.window?.contentView {
+                NSMenu.popUpContextMenu(menu, with: event, for: view)
+            } else {
+                menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            }
+        }
+    }
+}
+
+private final class MenuActionHandler: NSObject {
+    let title: String
+    let keyEquivalent: String
+    let action: () -> Void
+
+    init(title: String, keyEquivalent: String, action: @escaping () -> Void) {
+        self.title = title
+        self.keyEquivalent = keyEquivalent
+        self.action = action
+    }
+
+    func makeItem() -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(invoke), keyEquivalent: keyEquivalent)
+        item.target = self
+        return item
+    }
+
+    @objc private func invoke() {
+        action()
     }
 }

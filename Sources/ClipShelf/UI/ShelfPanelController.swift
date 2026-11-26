@@ -293,6 +293,19 @@ public final class ShelfPanelController {
             }
         }
 
+        // Instant type-to-search: any printable character starts searching immediately
+        if !store.isSearching,
+           !flags.contains(.command),
+           !flags.contains(.control),
+           !flags.contains(.function),
+           let chars = event.characters,
+           !chars.isEmpty,
+           chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) && !CharacterSet.whitespacesAndNewlines.contains($0) }) {
+            store.searchQuery = chars
+            store.isSearching = true
+            return true
+        }
+
         return false
     }
 }

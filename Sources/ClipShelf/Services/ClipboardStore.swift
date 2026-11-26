@@ -13,9 +13,22 @@ public final class ClipboardStore: ObservableObject {
     public let storage: SQLiteStorage
 
     @Published public var items: [ClipboardItem] = []
+    @Published public private(set) var filteredItems: [ClipboardItem] = []
     @Published public var pinboards: [Pinboard] = []
-    @Published public var activeTab: ShelfTab = .clipboard
-    @Published public var searchQuery: String = ""
+    @Published public var activeTab: ShelfTab = .clipboard {
+        didSet {
+            if oldValue != activeTab {
+                rebuildFilteredItems()
+            }
+        }
+    }
+    @Published public var searchQuery: String = "" {
+        didSet {
+            if oldValue != searchQuery {
+                rebuildFilteredItems()
+            }
+        }
+    }
     @Published public var isSearching: Bool = false
     @Published public var selectedItemID: UUID?
     @Published public var settings: AppSettings {
@@ -29,6 +42,17 @@ public final class ClipboardStore: ObservableObject {
 
     private static let settingsKey = "com.clipshelf.settings.v1"
     private var appIconCache: [String: NSImage] = [:]
+    private let blobImageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 120
+        return cache
+    }()
+    private let fileIconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 120
+        return cache
+    }()
+    private var searchIndex: [UUID: String] = [:]
 
     public init(storage: SQLiteStorage) {
         self.storage = storage
@@ -42,7 +66,25 @@ public final class ClipboardStore: ObservableObject {
         pruneIfNeeded()
     }
 
-    public var filteredItems: [ClipboardItem] {
+    public var selectedItem: ClipboardItem? {
+        guard let selectedItemID else { return filteredItems.first }
+        return filteredItems.first(where: { $0.id == selectedItemID }) ?? filteredItems.first
+    }
+
+    private func buildSearchText(for item: ClipboardItem) -> String {
+        var parts: [String] = []
+        if let t = item.plainText { parts.append(t) }
+        if let u = item.urlString { parts.append(u) }
+        if let lt = item.linkTitle { parts.append(lt) }
+        if let ct = item.customTitle { parts.append(ct) }
+        if let app = item.sourceAppName { parts.append(app) }
+        if let c = item.colorHex { parts.append(c) }
+        if !item.filePaths.isEmpty { parts.append(item.filePaths.joined(separator: " ")) }
+        parts.append(item.kind.displayName)
+        return parts.joined(separator: " ").lowercased()
+    }
+
+    private func rebuildFilteredItems() {
         let base: [ClipboardItem]
         switch activeTab {
         case .clipboard:
@@ -50,23 +92,35 @@ public final class ClipboardStore: ObservableObject {
         case .pinboard(let pinID):
             base = items.filter { $0.pinboardIDs.contains(pinID) }
         }
-        guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return base
-        }
-        return base.filter { $0.matches(query: searchQuery) }
-    }
 
-    public var selectedItem: ClipboardItem? {
-        guard let selectedItemID else { return filteredItems.first }
-        return filteredItems.first(where: { $0.id == selectedItemID }) ?? filteredItems.first
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            filteredItems = base
+        } else {
+            let terms = trimmed.lowercased().split(separator: " ")
+            filteredItems = base.filter { item in
+                let haystack = searchIndex[item.id] ?? buildSearchText(for: item)
+                return terms.allSatisfy { haystack.contains($0) }
+            }
+        }
+
+        if let current = selectedItemID, filteredItems.contains(where: { $0.id == current }) {
+            return
+        }
+        selectedItemID = filteredItems.first?.id
     }
 
     public func reloadAll() {
         self.pinboards = storage.fetchPinboards()
-        self.items = storage.fetchItems(limit: 500)
-        if selectedItemID == nil || !items.contains(where: { $0.id == selectedItemID }) {
-            selectedItemID = filteredItems.first?.id
+        let loaded = storage.fetchItems(limit: 500)
+        self.items = loaded
+        var newIndex: [UUID: String] = [:]
+        newIndex.reserveCapacity(loaded.count)
+        for item in loaded {
+            newIndex[item.id] = buildSearchText(for: item)
         }
+        self.searchIndex = newIndex
+        rebuildFilteredItems()
     }
 
     public func handleCapturedItem(_ item: ClipboardItem) {
@@ -74,6 +128,8 @@ public final class ClipboardStore: ObservableObject {
             items.remove(at: idx)
         }
         items.insert(item, at: 0)
+        searchIndex[item.id] = buildSearchText(for: item)
+        rebuildFilteredItems()
         if activeTab == .clipboard && searchQuery.isEmpty {
             selectedItemID = item.id
         }
@@ -85,20 +141,22 @@ public final class ClipboardStore: ObservableObject {
         if let imageFilename {
             items[idx].linkImageFilename = imageFilename
         }
+        searchIndex[itemID] = buildSearchText(for: items[idx])
+        rebuildFilteredItems()
     }
 
     public func deleteItem(_ item: ClipboardItem) {
-        let currentList = filteredItems
-        let currentIdx = currentList.firstIndex(where: { $0.id == item.id })
+        let currentIdx = filteredItems.firstIndex(where: { $0.id == item.id })
         storage.deleteItem(item)
         items.removeAll(where: { $0.id == item.id })
+        searchIndex.removeValue(forKey: item.id)
+        rebuildFilteredItems()
 
-        let nextList = filteredItems
-        if let currentIdx, !nextList.isEmpty {
-            let safeIdx = min(currentIdx, nextList.count - 1)
-            selectedItemID = nextList[safeIdx].id
+        if let currentIdx, !filteredItems.isEmpty {
+            let safeIdx = min(currentIdx, filteredItems.count - 1)
+            selectedItemID = filteredItems[safeIdx].id
         } else {
-            selectedItemID = nextList.first?.id
+            selectedItemID = filteredItems.first?.id
         }
     }
 
@@ -166,6 +224,7 @@ public final class ClipboardStore: ObservableObject {
             storage.assignItem(item.id, toPinboard: pinboardID)
             items[idx].pinboardIDs.append(pinboardID)
         }
+        rebuildFilteredItems()
     }
 
     public func renameItem(_ item: ClipboardItem, title: String?) {
@@ -174,10 +233,12 @@ public final class ClipboardStore: ObservableObject {
         storage.updateCustomTitle(itemID: item.id, title: finalTitle)
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
             items[idx].customTitle = finalTitle
+            searchIndex[item.id] = buildSearchText(for: items[idx])
+            rebuildFilteredItems()
         }
     }
 
-    // MARK: - App Icon Lookup
+    // MARK: - App Icon & Image Caching
 
     public func appIcon(for bundleID: String?) -> NSImage? {
         guard let bundleID else { return nil }
@@ -190,6 +251,30 @@ public final class ClipboardStore: ObservableObject {
             return icon
         }
         return nil
+    }
+
+    public func blobImage(named filename: String?) -> NSImage? {
+        guard let filename else { return nil }
+        let key = filename as NSString
+        if let cached = blobImageCache.object(forKey: key) {
+            return cached
+        }
+        guard let image = NSImage(contentsOf: storage.blobURL(for: filename)) else {
+            return nil
+        }
+        blobImageCache.setObject(image, forKey: key)
+        return image
+    }
+
+    public func fileIcon(for path: String?) -> NSImage? {
+        guard let path else { return nil }
+        let key = path as NSString
+        if let cached = fileIconCache.object(forKey: key) {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        fileIconCache.setObject(icon, forKey: key)
+        return icon
     }
 
     // MARK: - Settings & Login Item

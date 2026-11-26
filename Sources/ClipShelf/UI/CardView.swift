@@ -7,7 +7,8 @@ struct CardView: View {
     let slotIndex: Int
     let isSelected: Bool
     let appIcon: NSImage?
-    let storage: SQLiteStorage
+    let previewImage: NSImage?
+    let fileIcon: NSImage?
     let pinboards: [Pinboard]
     let onSelect: () -> Void
     let onPaste: (_ plainTextOnly: Bool) -> Void
@@ -108,7 +109,7 @@ struct CardView: View {
     private var bodyContent: some View {
         switch item.kind {
         case .text:
-            Text(item.plainText ?? "")
+            Text(String((item.plainText ?? "").prefix(600)))
                 .font(.system(size: 12.5, weight: .regular))
                 .foregroundStyle(Color.white.opacity(0.92))
                 .lineSpacing(2)
@@ -120,8 +121,7 @@ struct CardView: View {
 
         case .link:
             VStack(alignment: .leading, spacing: 6) {
-                if let imgFile = item.linkImageFilename,
-                   let nsImage = NSImage(contentsOf: storage.blobURL(for: imgFile)) {
+                if let nsImage = previewImage {
                     Image(nsImage: nsImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -132,15 +132,14 @@ struct CardView: View {
                     Text(item.linkTitle ?? item.urlString ?? "")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.95))
-                        .lineLimit(item.linkImageFilename == nil ? 5 : 2)
+                        .lineLimit(previewImage == nil ? 5 : 2)
                 }
                 .padding(.horizontal, 13)
-                .padding(.top, item.linkImageFilename == nil ? 11 : 4)
+                .padding(.top, previewImage == nil ? 11 : 4)
             }
 
         case .image:
-            if let imgFile = item.imageFilename,
-               let nsImage = NSImage(contentsOf: storage.blobURL(for: imgFile)) {
+            if let nsImage = previewImage {
                 Image(nsImage: nsImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -156,11 +155,12 @@ struct CardView: View {
         case .file:
             VStack(alignment: .leading, spacing: 8) {
                 if let first = item.filePaths.first {
-                    let fileIcon = NSWorkspace.shared.icon(forFile: first)
                     HStack(spacing: 10) {
-                        Image(nsImage: fileIcon)
-                            .resizable()
-                            .frame(width: 40, height: 40)
+                        if let fileIcon {
+                            Image(nsImage: fileIcon)
+                                .resizable()
+                                .frame(width: 40, height: 40)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(URL(fileURLWithPath: first).lastPathComponent)
                                 .font(.system(size: 13, weight: .semibold))
