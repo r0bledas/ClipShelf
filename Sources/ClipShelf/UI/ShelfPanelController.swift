@@ -17,6 +17,7 @@ public final class ShelfPanelController {
     private var previousApp: NSRunningApplication?
     private var localKeyMonitor: Any?
     private var globalClickMonitor: Any?
+    private var suppressInitialSelectAll = false
 
     private let onOpenSettings: () -> Void
     private let onOpenAbout: () -> Void
@@ -259,8 +260,8 @@ public final class ShelfPanelController {
             }
         }
 
-        // ⌘⌫ -> Delete selected card
-        if flags == .command && keyCode == kVK_Delete {
+        // ⌘⌫ -> Delete selected card (when not editing search text)
+        if flags == .command && keyCode == kVK_Delete && !store.isSearching {
             if let item = store.selectedItem {
                 store.deleteItem(item)
                 return true
@@ -293,17 +294,32 @@ public final class ShelfPanelController {
             }
         }
 
-        // Instant type-to-search: any printable character starts searching immediately
-        if !store.isSearching,
-           !flags.contains(.command),
+        // Instant type-to-search: any printable character starts searching immediately,
+        // and buffers fast keystrokes until the TextField's field editor is first responder.
+        if !flags.contains(.command),
            !flags.contains(.control),
            !flags.contains(.function),
            let chars = event.characters,
            !chars.isEmpty,
-           chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) && !CharacterSet.whitespacesAndNewlines.contains($0) }) {
-            store.searchQuery = chars
-            store.isSearching = true
-            return true
+           chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
+            let isFieldEditorActive = (panel.firstResponder is NSTextView)
+            if !store.isSearching {
+                if !chars.unicodeScalars.allSatisfy({ CharacterSet.whitespacesAndNewlines.contains($0) }) {
+                    store.searchQuery = chars
+                    suppressInitialSelectAll = true
+                    store.isSearching = true
+                    return true
+                }
+            } else if !isFieldEditorActive {
+                store.searchQuery += chars
+                suppressInitialSelectAll = true
+                return true
+            } else if suppressInitialSelectAll, let editor = panel.firstResponder as? NSTextView {
+                // Guard against AppKit's automatic select-all right after mounting the TextField
+                suppressInitialSelectAll = false
+                let totalLen = (editor.string as NSString).length
+                editor.setSelectedRange(NSRange(location: totalLen, length: 0))
+            }
         }
 
         return false

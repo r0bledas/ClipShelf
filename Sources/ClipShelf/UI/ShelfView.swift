@@ -187,6 +187,15 @@ struct ShelfView: View {
                     .foregroundStyle(.white)
                     .focused($searchFieldFocused)
                     .frame(width: 210)
+                    .onAppear {
+                        searchFieldFocused = true
+                        DispatchQueue.main.async {
+                            if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                                let len = (editor.string as NSString).length
+                                editor.setSelectedRange(NSRange(location: len, length: 0))
+                            }
+                        }
+                    }
                     .onExitCommand {
                         store.isSearching = false
                     }
